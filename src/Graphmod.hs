@@ -1,17 +1,21 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Graphmod (graphmod) where
 
 import Graphmod.Utils
 import qualified Graphmod.Trie as Trie
+import Graphmod.LookingGlass qualified as LG
 import Graphmod.CabalSupport(parseCabalFile,Unit(..))
 import Text.Dot
 
+import Data.Functor ((<&>))
 import Control.Monad(forM_,msum,guard,unless)
 import Control.Monad.Fix(mfix)
 import           Control.Exception (SomeException(..))
 import qualified Control.Exception as X (catch)
-import Data.List(intercalate,transpose)
+import Data.List(intersperse,intercalate,transpose)
 import Data.Maybe(isJust,fromMaybe,listToMaybe)
 import qualified Data.IntMap as IMap
 import qualified Data.Map    as Map
@@ -22,6 +26,8 @@ import System.FilePath (takeExtension)
 import System.Console.GetOpt
 import System.Directory(getDirectoryContents)
 import Numeric(showHex)
+import Data.ByteString.Lazy.Char8 qualified as BL8
+import Data.Aeson qualified as Ae
 
 import Paths_graphmod (version)
 import Data.Version (showVersion)
@@ -40,6 +46,7 @@ graphmod xs = do
              getOutputFormat >>= \case
                DOT -> putStr (make_dot opts g)
                SHOW -> putStrLn (show g)
+               LOOKING_GLASS -> BL8.putStrLn $ Ae.encode $ make_looking_glass g
       where opts = foldr ($) default_opts fs
 
     _ -> hPutStrLn stderr $
@@ -625,12 +632,20 @@ set_cabal on o = o { use_cabal = on }
 
 -----------------
 
-make_looking_glass :: (AllEdges, Nodes) -> String
-make_looking_glass _ = ""
+make_looking_glass :: (AllEdges, Nodes) -> LG.GraphDef
+make_looking_glass (AllEdges{..}, nodes) =
+  LG.GraphDef
+  { title = "w/e"
+  , nodes =
+    let byNodeId = Trie.toList nodes >>= \(path, leaves) ->
+          leaves <&> \((_, leafName), nodeId) -> (show nodeId, LG.Node{label= mconcat $ intersperse "." $ path ++ [leafName]})
+    in Map.fromList byNodeId
+  , edges = IMap.toList normalEdges >>= \(modId, impIds) -> ISet.toList impIds <&> \impId -> LG.Edge{from = show impId, to = show modId}
+  }
 
 -------------------
 
-data OutputFormat = DOT | SHOW deriving (Show, Read)
+data OutputFormat = DOT | SHOW | LOOKING_GLASS deriving (Show, Read)
 
 getOutputFormat :: IO OutputFormat
 getOutputFormat = maybe DOT read <$> lookupEnv "GRAPHMOD_FMT"

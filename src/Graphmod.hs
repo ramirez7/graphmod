@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Graphmod (graphmod) where
 
 import Graphmod.Utils
@@ -15,6 +17,7 @@ import qualified Data.IntMap as IMap
 import qualified Data.Map    as Map
 import qualified Data.IntSet as ISet
 import System.IO(hPutStrLn,stderr)
+import System.Environment (lookupEnv)
 import System.FilePath (takeExtension)
 import System.Console.GetOpt
 import System.Directory(getDirectoryContents)
@@ -34,7 +37,9 @@ graphmod xs = do
           do (incs,inps) <- fromCabal (use_cabal opts)
              g <- graph (foldr add_inc (add_current opts) incs)
                         (inps ++ map to_input ms)
-             putStr (make_dot opts g)
+             getOutputFormat >>= \case
+               DOT -> putStr (make_dot opts g)
+               SHOW -> putStrLn (show g)
       where opts = foldr ($) default_opts fs
 
     _ -> hPutStrLn stderr $
@@ -76,7 +81,7 @@ data NodeT    = ModuleNode
 data AllEdges = AllEdges
   { normalEdges   :: Edges
   , sourceEdges   :: Edges
-  }
+  } deriving (Show)
 
 noEdges :: AllEdges
 noEdges = AllEdges { normalEdges    = IMap.empty
@@ -617,3 +622,15 @@ set_size s o = o { graph_size = s }
 
 set_cabal :: Bool -> OptT
 set_cabal on o = o { use_cabal = on }
+
+-----------------
+
+make_looking_glass :: (AllEdges, Nodes) -> String
+make_looking_glass _ = ""
+
+-------------------
+
+data OutputFormat = DOT | SHOW deriving (Show, Read)
+
+getOutputFormat :: IO OutputFormat
+getOutputFormat = maybe DOT read <$> lookupEnv "GRAPHMOD_FMT"

@@ -1,6 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Graphmod (graphmod) where
 
@@ -11,6 +14,7 @@ import Graphmod.CabalSupport(parseCabalFile,Unit(..))
 import Text.Dot
 
 import Data.Functor ((<&>))
+import Data.Foldable
 import Control.Monad(forM_,msum,guard,unless)
 import Control.Monad.Fix(mfix)
 import           Control.Exception (SomeException(..))
@@ -19,6 +23,7 @@ import Data.List(intersperse,intercalate,transpose)
 import Data.Maybe(isJust,fromMaybe,listToMaybe)
 import qualified Data.IntMap as IMap
 import qualified Data.Map    as Map
+import qualified Data.Set    as Set
 import qualified Data.IntSet as ISet
 import System.IO(hPutStrLn,stderr)
 import System.Environment (lookupEnv)
@@ -31,6 +36,8 @@ import Data.Aeson qualified as Ae
 
 import Paths_graphmod (version)
 import Data.Version (showVersion)
+
+import Debug.Trace
 
 graphmod :: [String] -> IO ()
 graphmod xs = do
@@ -46,7 +53,9 @@ graphmod xs = do
              getOutputFormat >>= \case
                DOT -> putStr (make_dot opts g)
                SHOW -> putStrLn (show g)
-               LOOKING_GLASS -> BL8.putStrLn $ Ae.encode $ make_looking_glass g
+               LOOKING_GLASS -> do
+                 let lg = (maybe id apply_deps_of opts.deps_of) (make_looking_glass g)
+                 BL8.putStrLn $ Ae.encode lg
       where opts = foldr ($) default_opts fs
 
     _ -> hPutStrLn stderr $
@@ -499,7 +508,8 @@ data Opts = Opts
   , color_scheme  :: Int
   , prune_edges   :: Bool
   , graph_size    :: String
-
+  , deps_of       :: Maybe String
+  , deps_on       :: Maybe String
   , use_cabal     :: Bool -- ^ should we try to use a cabal file, if any
   }
 
@@ -521,6 +531,8 @@ default_opts = Opts
   , color_scheme    = 0
   , prune_edges     = False
   , graph_size      = "6,4"
+  , deps_of         = Nothing
+  , deps_on         = Nothing
   , use_cabal       = True
   }
 
@@ -562,6 +574,15 @@ options =
   , Option ['s'] ["colors"] (ReqArg add_color_scheme "NUM")
     "Choose a color scheme number (0-5)"
 
+  , Option [] ["deps-of"] (ReqArg add_deps_of "MODULE")
+    "Only output deps of MODULE"
+
+  , Option [] ["deps-on"] (ReqArg add_deps_on "MODULE")
+    "Only output deps on MODULE"
+  
+  , Option ['s'] ["colors"] (ReqArg add_color_scheme "NUM")
+    "Choose a color scheme number (0-5)"
+  
   , Option [] ["no-cabal"] (NoArg (set_cabal False))
     "Do not use Cabal for paths and modules."
 
@@ -592,6 +613,12 @@ set_no_mod_in_cluster o = o { mod_in_cluster = False }
 add_inc          :: FilePath -> OptT
 add_inc d o       = o { inc_dirs = d : inc_dirs o }
 
+add_deps_of :: String -> OptT
+add_deps_of m o = o { deps_of = Just m }
+
+add_deps_on :: String -> OptT
+add_deps_on m o = o { deps_on = Just m }
+
 add_ignore_mod   :: String -> OptT
 add_ignore_mod s o = o { ignore_mods = ins (splitModName s) }
   where
@@ -602,7 +629,7 @@ add_ignore_mod s o = o { ignore_mods = ins (splitModName s) }
   upd m Nothing                 = IgnoreSome [m]
 
 add_ignore_qual :: String -> OptT
-add_ignore_qual s o = o { ignore_mods = Trie.insert ((qualifierNodes.splitQualifier) s)
+add_ignore_qual s o = o { ignore_mods = Trie.insert ((qualifierNodes . splitQualifier) s)
                                           (const IgnoreAll) (ignore_mods o) }
 
 add_color_scheme :: String -> OptT
@@ -611,7 +638,7 @@ add_color_scheme n o = o { color_scheme = case reads n of
                                             _ -> color_scheme default_opts }
 
 add_collapse_qual :: Bool -> String -> OptT
-add_collapse_qual m s o = o { collapse_quals = upd ((qualifierNodes.splitQualifier) s)
+add_collapse_qual m s o = o { collapse_quals = upd ((qualifierNodes . splitQualifier) s)
                                                       (collapse_quals o) }
 
   where
@@ -631,6 +658,26 @@ set_cabal :: Bool -> OptT
 set_cabal on o = o { use_cabal = on }
 
 -----------------
+
+
+apply_deps_of :: String -> LG.GraphDef -> LG.GraphDef
+apply_deps_of m LG.GraphDef{..} =
+  let mId = case find ((== m) . (.label) . snd) $ Map.toList nodes of
+        Nothing -> error $ unwords ["Unknown module:", m]
+        Just (x, _) -> x
+      edgeMap = Map.fromListWith (<>) [ (to, [from]) | LG.Edge{..} <- edges]
+      relevantNodes =
+        let go curr = mconcat
+              [ Set.singleton curr
+              , maybe mempty (foldMap go) (Map.lookup curr edgeMap)
+              ]
+
+        in go mId
+  in LG.GraphDef
+     { title = title
+     , nodes = Map.filterWithKey (\k _ -> Set.member k relevantNodes) nodes
+     , edges = filter (\LG.Edge{..} -> Set.member from relevantNodes && Set.member to relevantNodes) edges
+     }
 
 make_looking_glass :: (AllEdges, Nodes) -> LG.GraphDef
 make_looking_glass (AllEdges{..}, nodes) =

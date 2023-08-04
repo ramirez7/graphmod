@@ -667,12 +667,12 @@ apply_deps_of m LG.GraphDef{..} =
         Just (x, _) -> x
       edgeMap = Map.fromListWith (<>) [ (to, [from]) | LG.Edge{..} <- edges]
       relevantNodes =
-        let go curr = mconcat
-              [ Set.singleton curr
-              , maybe mempty (foldMap go) (Map.lookup curr edgeMap)
-              ]
-
-        in go mId
+        let go acc todo = case Set.minView todo of
+              Nothing -> acc
+              Just (x, rest) -> 
+                let children = Set.fromList $ Map.findWithDefault [] x edgeMap
+                in go (Set.insert x acc) (rest <> children)
+        in go mempty (Set.singleton mId)
   in LG.GraphDef
      { title = title
      , nodes = Map.filterWithKey (\k _ -> Set.member k relevantNodes) nodes

@@ -670,8 +670,8 @@ apply_deps_of m LG.GraphDef{..} =
         let go acc todo = case Set.minView todo of
               Nothing -> acc
               Just (x, rest) -> 
-                let children = Set.fromList $ Map.findWithDefault [] x edgeMap
-                in go (Set.insert x acc) (rest <> children)
+                let children = Set.fromList (Map.findWithDefault [] x edgeMap) `Set.difference` acc
+                in trace (unwords ["Processing", show $ nodes Map.! x, "out of", show $ Set.size todo]) $ go (Set.insert x acc) (rest <> children)
         in go mempty (Set.singleton mId)
   in LG.GraphDef
      { title = title

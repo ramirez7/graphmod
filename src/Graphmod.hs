@@ -13,7 +13,7 @@ import Graphmod.LookingGlass qualified as LG
 import Graphmod.CabalSupport(parseCabalFile,Unit(..))
 import Text.Dot
 
-import Data.Functor ((<&>))
+import Data.Functor ((<&>), ($>))
 import Data.Foldable
 import Control.Monad(forM_,msum,guard,unless)
 import Control.Monad.Fix(mfix)
@@ -54,7 +54,8 @@ graphmod xs = do
                DOT -> putStr (make_dot opts g)
                SHOW -> putStrLn (show g)
                LOOKING_GLASS -> do
-                 let lg = (maybe id apply_deps_of opts.deps_of) (make_looking_glass g)
+                 let focus = asum [opts.deps_of, opts.deps_on]
+                 let lg = (maybe id apply_deps_of opts.deps_of) (make_looking_glass focus g)
                  BL8.putStrLn $ Ae.encode lg
       where opts = foldr ($) default_opts fs
 
@@ -679,13 +680,23 @@ apply_deps_of m LG.GraphDef{..} =
      , edges = filter (\LG.Edge{..} -> Set.member from relevantNodes && Set.member to relevantNodes) edges
      }
 
-make_looking_glass :: (AllEdges, Nodes) -> LG.GraphDef
-make_looking_glass (AllEdges{..}, nodes) =
+make_looking_glass :: Maybe String -> (AllEdges, Nodes) -> LG.GraphDef
+make_looking_glass focus (AllEdges{..}, nodes) =
   LG.GraphDef
   { title = "w/e"
   , nodes =
     let byNodeId = Trie.toList nodes >>= \(path, leaves) ->
-          leaves <&> \((_, leafName), nodeId) -> (show nodeId, LG.Node{label= mconcat $ intersperse "." $ path ++ [leafName]})
+          leaves <&> \((_, leafName), nodeId) ->
+          ( show nodeId
+          , let label = mconcat $ intersperse "." $ path ++ [leafName] in
+              LG.Node
+              {color = do
+                  f <- focus
+                  guard (f == label)
+                  pure "red"
+              , label = label
+              }
+          )
     in Map.fromList byNodeId
   , edges = IMap.toList normalEdges >>= \(modId, impIds) -> ISet.toList impIds <&> \impId -> LG.Edge{from = show impId, to = show modId}
   }

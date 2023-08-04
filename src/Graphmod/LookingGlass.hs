@@ -11,6 +11,7 @@ import Data.Map (Map)
 
 data Node = Node
   { label :: String
+  , color :: Maybe String
   } deriving stock (Show, Generic)
   deriving anyclass (Ae.ToJSON)
 
